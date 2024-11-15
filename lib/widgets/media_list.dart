@@ -15,15 +15,15 @@ class LoadingProgress {
 class MediaList extends StatefulWidget {
   final String selectedItem;
   final List<Map<String, dynamic>>? tracks;
-  final String? ipodDbId; // Changed from dbId to ipodDbId for clarity
-  final int? dbVersion; // Changed from version to dbVersion for clarity
+  final String? ipodDbId;
+  final int? dbVersion;
 
   const MediaList({
     super.key,
     required this.selectedItem,
     this.tracks,
-    this.ipodDbId, // Add this property
-    this.dbVersion, // Add this property
+    this.ipodDbId,
+    this.dbVersion,
   });
 
   @override
@@ -38,15 +38,13 @@ class _MediaListState extends State<MediaList> {
   Timer? _checkProcessTimer;
   List<Map<String, dynamic>> _processedTracks = [];
   bool _isLoading = false;
-  int _processedCount = 0;
-  int _totalTracks = 0;
-  bool _loadingFromCache = false;
   Isolate? _isolate;
   ReceivePort? _receivePort;
 
   @override
   void initState() {
     super.initState();
+    print("Initializing MediaList...");
     _loadTracksInBackground();
   }
 
@@ -54,46 +52,16 @@ class _MediaListState extends State<MediaList> {
   void didUpdateWidget(MediaList oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.tracks != oldWidget.tracks) {
+      print("Tracks updated, reloading...");
       _isolate?.kill();
       _receivePort?.close();
       _loadTracksInBackground();
     }
   }
 
-  Future<void> _loadTracksWithCache() async {
-    if (widget.ipodDbId == null || widget.dbVersion == null) {
-      return;
-    }
-
-    setState(() {
-      _isLoading = true;
-      _loadingFromCache = true;
-    });
-
-    try {
-      if (await DbService.needsUpdate(widget.ipodDbId!, widget.dbVersion!)) {
-        _loadingFromCache = false;
-        if (widget.tracks != null) {
-          await _loadTracksInBackground();
-        }
-      } else {
-        final cachedTracks = await DbService.getCachedTracks(widget.ipodDbId!);
-        setState(() {
-          _processedTracks = cachedTracks;
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      print('Error accessing cache: $e');
-      if (widget.tracks != null) {
-        _loadingFromCache = false;
-        await _loadTracksInBackground();
-      }
-    }
-  }
-
   Future<void> _loadTracksInBackground() async {
     if (widget.tracks == null || widget.tracks!.isEmpty) {
+      print("No tracks to process.");
       setState(() {
         _processedTracks = [];
         _isLoading = false;
@@ -107,58 +75,52 @@ class _MediaListState extends State<MediaList> {
     });
 
     final receivePort = ReceivePort();
+    _receivePort = receivePort;
 
+    print("Spawning isolate for track processing...");
     await Isolate.spawn(
       _processTracks,
       {
         'sendPort': receivePort.sendPort,
         'tracks': widget.tracks,
-        'batchSize': 50, // Now we're passing the batch size
+        'batchSize': 50,
       },
     );
 
-    await for (final message in receivePort) {
+    receivePort.listen((message) {
       if (message is LoadingProgress) {
-        if (mounted) {
-          setState(() {
-            _processedTracks = message.tracks;
-            _processedCount = message.processedTracks;
-            if (message.processedTracks >= message.totalTracks) {
-              _isLoading = false;
-            }
-          });
-        }
+        print("Progress: ${message.processedTracks}/${message.totalTracks}");
+        setState(() {
+          _processedTracks = message.tracks;
+          _isLoading = message.processedTracks < message.totalTracks;
+        });
       }
-    }
+    });
   }
 
   static void _processTracks(Map<String, dynamic> message) {
     final SendPort sendPort = message['sendPort'];
     final List<Map<String, dynamic>> tracks = message['tracks'];
-    final int batchSize =
-        message['batchSize'] as int; // Cast to ensure type safety
+    final int batchSize = message['batchSize'];
     final processedTracks = <Map<String, dynamic>>[];
 
+    print("Processing ${tracks.length} tracks in batches of $batchSize...");
     for (var i = 0; i < tracks.length; i += batchSize) {
       final endIndex =
           (i + batchSize < tracks.length) ? i + batchSize : tracks.length;
       final batch = tracks.sublist(i, endIndex);
 
-      // Process batch
       for (var track in batch) {
-        processedTracks.add({
-          ...track,
-          'processed': true,
-        });
+        processedTracks.add({...track, 'processed': true});
       }
 
-      // Send progress update
       sendPort.send(LoadingProgress(
         List.from(processedTracks),
         tracks.length,
         processedTracks.length,
       ));
     }
+    print("Finished processing tracks.");
   }
 
   @override
@@ -167,14 +129,9 @@ class _MediaListState extends State<MediaList> {
     _verticalController.dispose();
     _stopPlayback();
     _checkProcessTimer?.cancel();
+    _isolate?.kill();
+    _receivePort?.close();
     super.dispose();
-  }
-
-  String formatTime(int milliseconds) {
-    final seconds = milliseconds ~/ 1000;
-    final minutes = seconds ~/ 60;
-    final remainingSeconds = seconds % 60;
-    return '$minutes:${remainingSeconds.toString().padLeft(2, '0')}';
   }
 
   Future<void> _stopPlayback() async {
@@ -190,25 +147,20 @@ class _MediaListState extends State<MediaList> {
 
   Future<void> playTrack(Map<String, dynamic> track, int index) async {
     try {
-      // Stop current playback if any
       await _stopPlayback();
 
-      // Get the file path from the track data
       final path = track['path'] as String;
       if (path.isEmpty) return;
 
-      // Convert iPod path to actual file system path
       final fullPath = path.replaceAll(':', '/');
-      final mountPoint = '/media/john/IPOD'; // Adjust this to your mount point
+      final mountPoint = '/media/john/IPOD';
       final filePath = '$mountPoint/$fullPath';
 
-      // Check if file exists
       if (!await File(filePath).exists()) {
         print('File not found: $filePath');
         return;
       }
 
-      // Start playback using mpv
       _playerProcess = await Process.start('mpv', [
         '--no-video',
         '--no-terminal',
@@ -220,18 +172,6 @@ class _MediaListState extends State<MediaList> {
         _playingIndex = index;
       });
 
-      // Start checking if process is still running
-      _checkProcessTimer?.cancel();
-      _checkProcessTimer = Timer.periodic(Duration(seconds: 1), (timer) {
-        if (_playerProcess == null) {
-          timer.cancel();
-          setState(() {
-            _playingIndex = null;
-          });
-        }
-      });
-
-      // Handle process exit
       _playerProcess!.exitCode.then((_) {
         if (mounted) {
           setState(() {
@@ -242,156 +182,48 @@ class _MediaListState extends State<MediaList> {
       });
     } catch (e) {
       print('Error playing track: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error playing track: ${e.toString()}')),
-      );
-    }
-  }
-
-  Future<void> togglePlayPause(Map<String, dynamic> track, int index) async {
-    if (_playingIndex == index) {
-      await _stopPlayback();
-    } else {
-      await playTrack(track, index);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        Scrollbar(
-          controller: _verticalController,
-          thumbVisibility: true,
-          child: Scrollbar(
-            controller: _horizontalController,
-            thumbVisibility: true,
-            notificationPredicate: (notification) => notification.depth == 1,
-            child: SingleChildScrollView(
-              controller: _verticalController,
-              scrollDirection: Axis.vertical,
-              child: SingleChildScrollView(
-                controller: _horizontalController,
-                scrollDirection: Axis.horizontal,
-                child: Theme(
-                  data: Theme.of(context).copyWith(
-                    dataTableTheme: DataTableThemeData(
-                      headingTextStyle: _headerStyle(),
-                      dataTextStyle: _cellStyle(),
-                    ),
-                  ),
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      minWidth: MediaQuery.of(context).size.width,
-                    ),
-                    child: _isLoading
-                        ? _buildLoadingIndicator()
-                        : _buildDataTable(),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-        if (_isLoading)
-          Positioned.fill(
-            child: Center(
-              child: Container(
-                padding: EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    CircularProgressIndicator(
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                    ),
-                    SizedBox(height: 16),
-                    Text(
-                      'Loading tracks...',
-                      style: TextStyle(color: Colors.white),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
+    print(
+        "Building MediaList widget. Processed tracks: ${_processedTracks.length}");
 
-  Widget _buildLoadingIndicator() {
-    return Container(
-      height: 300,
-      child: Center(
-        child: CircularProgressIndicator(),
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.selectedItem),
       ),
+      body: _isLoading
+          ? Center(child: CircularProgressIndicator())
+          : _processedTracks.isEmpty
+              ? Center(child: Text("No tracks available"))
+              : ListView.builder(
+                  controller: _verticalController,
+                  itemCount: _processedTracks.length,
+                  itemBuilder: (context, index) {
+                    final track = _processedTracks[index];
+                    final isPlaying = _playingIndex == index;
+                    return ListTile(
+                      leading: Icon(
+                        isPlaying
+                            ? Icons.pause_circle
+                            : Icons.play_circle_outline,
+                      ),
+                      title: Text(track['title'] ?? 'Unknown'),
+                      subtitle: Text(track['artist'] ?? 'Unknown Artist'),
+                      trailing: Text(_formatTime(track['duration'] ?? 0)),
+                      onTap: () => playTrack(track, index),
+                    );
+                  },
+                ),
     );
   }
 
-  Widget _buildDataTable() {
-    return DataTable(
-      headingRowColor: MaterialStateProperty.all(Colors.grey[850]),
-      dataRowColor: MaterialStateProperty.resolveWith<Color>((states) {
-        return Colors.grey[800]!;
-      }),
-      columns: [
-        DataColumn(label: SizedBox.shrink()),
-        DataColumn(label: Text('Song')),
-        DataColumn(label: Text('Time')),
-        DataColumn(label: Text('Artist')),
-        DataColumn(label: Text('Album')),
-        DataColumn(label: Text('Genre')),
-        DataColumn(label: Text('Rating')),
-        DataColumn(label: Text('Play Count')),
-        DataColumn(label: Text('Track #')),
-        DataColumn(label: Text('Year')),
-      ],
-      rows: List.generate(_processedTracks.length, (index) {
-        final track = _processedTracks[index];
-        final isPlaying = _playingIndex == index;
-
-        return DataRow(
-          selected: isPlaying,
-          color: MaterialStateProperty.resolveWith<Color>((states) {
-            if (isPlaying) {
-              return Colors.blue.withOpacity(0.3);
-            }
-            return Colors.grey[800]!;
-          }),
-          cells: [
-            DataCell(
-              Icon(
-                isPlaying ? Icons.pause_circle : Icons.play_circle_outline,
-                color: Colors.white,
-              ),
-              onTap: () => togglePlayPause(track, index),
-            ),
-            DataCell(
-              Text(track['title'] ?? ''),
-              onDoubleTap: () => playTrack(track, index),
-            ),
-            DataCell(Text(formatTime(track['duration'] ?? 0))),
-            DataCell(Text(track['artist'] ?? '')),
-            DataCell(Text(track['album'] ?? '')),
-            DataCell(Text(track['genre'] ?? '')),
-            DataCell(Text(track['rating']?.toString() ?? '')),
-            DataCell(Text(track['play_count']?.toString() ?? '')),
-            DataCell(Text(track['track_number']?.toString() ?? '')),
-            DataCell(Text(track['year']?.toString() ?? '')),
-          ],
-        );
-      }),
-    );
-  }
-
-  TextStyle _headerStyle() {
-    return TextStyle(color: Colors.white, fontWeight: FontWeight.bold);
-  }
-
-  TextStyle _cellStyle() {
-    return TextStyle(color: Colors.white);
+  String _formatTime(int milliseconds) {
+    final seconds = milliseconds ~/ 1000;
+    final minutes = seconds ~/ 60;
+    final remainingSeconds = seconds % 60;
+    return '$minutes:${remainingSeconds.toString().padLeft(2, '0')}';
   }
 }
