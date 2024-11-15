@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:async';
 import 'dart:isolate';
 import '../services/db_service.dart';
+import 'package:audioplayers/audioplayers.dart';
 
 class LoadingProgress {
   final List<Map<String, dynamic>> tracks;
@@ -10,6 +11,7 @@ class LoadingProgress {
   final int processedTracks;
 
   LoadingProgress(this.tracks, this.totalTracks, this.processedTracks);
+  //LoadingProgress(this.tracks, this.totalTracks, this.processedTracks);
 }
 
 class MediaList extends StatefulWidget {
@@ -17,6 +19,8 @@ class MediaList extends StatefulWidget {
   final List<Map<String, dynamic>>? tracks;
   final String? ipodDbId;
   final int? dbVersion;
+  final AudioPlayer audioPlayer;
+  final Function(String?, String?) onTrackChange;
 
   const MediaList({
     super.key,
@@ -24,6 +28,8 @@ class MediaList extends StatefulWidget {
     this.tracks,
     this.ipodDbId,
     this.dbVersion,
+    required this.audioPlayer,
+    required this.onTrackChange,
   });
 
   @override
@@ -40,6 +46,8 @@ class _MediaListState extends State<MediaList> {
   bool _isLoading = false;
   Isolate? _isolate;
   ReceivePort? _receivePort;
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  bool _isPlaying = false;
 
   @override
   void initState() {
@@ -68,11 +76,32 @@ class _MediaListState extends State<MediaList> {
       });
       return;
     }
+    void _setupAudioPlayer() {
+      _audioPlayer.onPlayerStateChanged.listen((state) {
+        setState(() {
+          _isPlaying = state == PlayerState.playing;
+        });
+      });
 
-    setState(() {
-      _isLoading = true;
-      _processedTracks = [];
-    });
+      setState(() {
+        _isLoading = true;
+        _processedTracks = [];
+      });
+      _audioPlayer.onPlayerComplete.listen((_) {
+        setState(() {
+          _playingIndex = null;
+          _isPlaying = false;
+        });
+      });
+    }
+
+    Future<void> _stopPlayback() async {
+      await _audioPlayer.stop();
+      setState(() {
+        _playingIndex = null;
+        _isPlaying = false;
+      });
+    }
 
     final receivePort = ReceivePort();
     _receivePort = receivePort;
@@ -131,6 +160,7 @@ class _MediaListState extends State<MediaList> {
     _checkProcessTimer?.cancel();
     _isolate?.kill();
     _receivePort?.close();
+    _audioPlayer.dispose();
     super.dispose();
   }
 
@@ -147,6 +177,14 @@ class _MediaListState extends State<MediaList> {
 
   Future<void> playTrack(Map<String, dynamic> track, int index) async {
     try {
+      if (_playingIndex == index && _isPlaying) {
+        await _audioPlayer.pause();
+        return;
+      } else if (_playingIndex == index && !_isPlaying) {
+        await _audioPlayer.resume();
+        return;
+      }
+
       await _stopPlayback();
 
       final path = track['path'] as String;
@@ -161,25 +199,13 @@ class _MediaListState extends State<MediaList> {
         return;
       }
 
-      _playerProcess = await Process.start('mpv', [
-        '--no-video',
-        '--no-terminal',
-        '--no-config',
-        filePath,
-      ]);
-
+      final source = DeviceFileSource(filePath);
+      await _audioPlayer.play(source);
       setState(() {
         _playingIndex = index;
+        _isPlaying = true;
       });
-
-      _playerProcess!.exitCode.then((_) {
-        if (mounted) {
-          setState(() {
-            _playingIndex = null;
-            _playerProcess = null;
-          });
-        }
-      });
+      widget.onTrackChange(track['title'], track['artist']);
     } catch (e) {
       print('Error playing track: $e');
     }
@@ -187,9 +213,6 @@ class _MediaListState extends State<MediaList> {
 
   @override
   Widget build(BuildContext context) {
-    print(
-        "Building MediaList widget. Processed tracks: ${_processedTracks.length}");
-
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.selectedItem),
@@ -198,24 +221,105 @@ class _MediaListState extends State<MediaList> {
           ? Center(child: CircularProgressIndicator())
           : _processedTracks.isEmpty
               ? Center(child: Text("No tracks available"))
-              : ListView.builder(
-                  controller: _verticalController,
-                  itemCount: _processedTracks.length,
-                  itemBuilder: (context, index) {
-                    final track = _processedTracks[index];
-                    final isPlaying = _playingIndex == index;
-                    return ListTile(
-                      leading: Icon(
-                        isPlaying
-                            ? Icons.pause_circle
-                            : Icons.play_circle_outline,
+              : Column(
+                  children: [
+                    // Header Row
+                    Container(
+                      color: Colors.grey[850],
+                      padding: EdgeInsets.symmetric(vertical: 8.0),
+                      child: Row(
+                        children: [
+                          SizedBox(width: 50), // Play button space
+                          Expanded(
+                              flex: 3,
+                              child: Text('Title',
+                                  style:
+                                      TextStyle(fontWeight: FontWeight.bold))),
+                          Expanded(
+                              flex: 2,
+                              child: Text('Artist',
+                                  style:
+                                      TextStyle(fontWeight: FontWeight.bold))),
+                          Expanded(
+                              flex: 2,
+                              child: Text('Album',
+                                  style:
+                                      TextStyle(fontWeight: FontWeight.bold))),
+                          Expanded(
+                              child: Text('Time',
+                                  style:
+                                      TextStyle(fontWeight: FontWeight.bold))),
+                          Expanded(
+                              child: Text('Genre',
+                                  style:
+                                      TextStyle(fontWeight: FontWeight.bold))),
+                          Expanded(
+                              child: Text('Track #',
+                                  style:
+                                      TextStyle(fontWeight: FontWeight.bold))),
+                          Expanded(
+                              child: Text('Rating',
+                                  style:
+                                      TextStyle(fontWeight: FontWeight.bold))),
+                          Expanded(
+                              child: Text('Plays',
+                                  style:
+                                      TextStyle(fontWeight: FontWeight.bold))),
+                        ],
                       ),
-                      title: Text(track['title'] ?? 'Unknown'),
-                      subtitle: Text(track['artist'] ?? 'Unknown Artist'),
-                      trailing: Text(_formatTime(track['duration'] ?? 0)),
-                      onTap: () => playTrack(track, index),
-                    );
-                  },
+                    ),
+                    // Tracks List
+                    Expanded(
+                      child: ListView.builder(
+                        controller: _verticalController,
+                        itemCount: _processedTracks.length,
+                        itemBuilder: (context, index) {
+                          final track = _processedTracks[index];
+                          final isPlaying = _playingIndex == index;
+
+                          return Container(
+                            color:
+                                isPlaying ? Colors.blue.withOpacity(0.3) : null,
+                            child: Row(
+                              children: [
+                                SizedBox(
+                                  width: 50,
+                                  child: IconButton(
+                                    icon: Icon(isPlaying
+                                        ? Icons.pause_circle
+                                        : Icons.play_circle_outline),
+                                    onPressed: () => playTrack(track, index),
+                                  ),
+                                ),
+                                Expanded(
+                                    flex: 3,
+                                    child: Text(track['title'] ?? 'Unknown')),
+                                Expanded(
+                                    flex: 2,
+                                    child: Text(track['artist'] ?? '')),
+                                Expanded(
+                                    flex: 2, child: Text(track['album'] ?? '')),
+                                Expanded(
+                                    child: Text(
+                                        _formatTime(track['duration'] ?? 0))),
+                                Expanded(child: Text(track['genre'] ?? '')),
+                                Expanded(
+                                    child: Text(
+                                        track['track_number']?.toString() ??
+                                            '')),
+                                Expanded(
+                                    child: Text(
+                                        track['rating']?.toString() ?? '')),
+                                Expanded(
+                                    child: Text(
+                                        track['play_count']?.toString() ?? '')),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
                 ),
     );
   }

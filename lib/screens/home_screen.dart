@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../widgets/top_bar.dart';
 import '../widgets/sidebar.dart';
 import '../widgets/media_list.dart';
+import 'package:audioplayers/audioplayers.dart';
 
 class HomeScreen extends StatefulWidget {
   @override
@@ -9,11 +10,21 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  final AudioPlayer audioPlayer = AudioPlayer();
   String selectedItem = 'Recently Added';
   List<Map<String, dynamic>>? ipodTracks;
   String? ipodDbId;
   int? dbVersion;
+  String? currentSong;
+  String? currentArtist;
   bool isIpodSelected = false;
+
+  void updateCurrentTrack(String? song, String? artist) {
+    setState(() {
+      currentSong = song;
+      currentArtist = artist;
+    });
+  }
 
   int getTotalTime() {
     if (isIpodSelected && ipodTracks != null) {
@@ -63,6 +74,12 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   @override
+  void dispose() {
+    audioPlayer.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     int totalTime = getTotalTime();
     double totalSize = getTotalSize();
@@ -71,7 +88,11 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       body: Column(
         children: [
-          TopBar(),
+          TopBar(
+            audioPlayer: audioPlayer,
+            currentSong: currentSong,
+            currentArtist: currentArtist,
+          ),
           Expanded(
             child: Row(
               children: [
@@ -87,6 +108,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             tracks: isIpodSelected ? ipodTracks : null,
                             ipodDbId: isIpodSelected ? ipodDbId : null,
                             dbVersion: isIpodSelected ? dbVersion : null,
+                            audioPlayer: audioPlayer,
+                            onTrackChange: updateCurrentTrack,
                           ),
                         ),
                       ),

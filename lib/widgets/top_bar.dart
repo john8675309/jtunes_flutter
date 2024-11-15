@@ -1,12 +1,44 @@
 import 'package:flutter/material.dart';
+import 'package:audioplayers/audioplayers.dart';
 
 class TopBar extends StatefulWidget {
+  final AudioPlayer audioPlayer;
+  final String? currentSong;
+  final String? currentArtist;
+  const TopBar({
+    super.key,
+    required this.audioPlayer,
+    this.currentSong,
+    this.currentArtist,
+  });
   @override
   _TopBarState createState() => _TopBarState();
 }
 
 class _TopBarState extends State<TopBar> {
-  double _volume = 0.5; // Initial volume value (50%)
+  double _volume = 1.0;
+  bool _isMuted = false;
+  double _lastVolume = 1.0;
+  @override
+  void initState() {
+    super.initState();
+    // Set initial volume
+    widget.audioPlayer.setVolume(_volume);
+  }
+
+  void _toggleMute() {
+    setState(() {
+      if (_isMuted) {
+        _volume = _lastVolume;
+        _isMuted = false;
+      } else {
+        _lastVolume = _volume;
+        _volume = 0;
+        _isMuted = true;
+      }
+    });
+    widget.audioPlayer.setVolume(_volume);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -45,22 +77,21 @@ class _TopBarState extends State<TopBar> {
                   // Volume Slider
                   Row(
                     children: [
-                      Icon(Icons.volume_down, color: Colors.white),
                       Slider(
                         value: _volume,
                         min: 0.0,
                         max: 1.0,
-                        divisions: 10, // Optional: Add tick marks
+                        divisions: 20,
                         onChanged: (value) {
                           setState(() {
-                            _volume = value; // Update slider value
+                            _volume = value;
+                            _isMuted = value == 0;
                           });
-                          print('Volume: $value'); // Handle volume change
+                          widget.audioPlayer.setVolume(value);
                         },
                         activeColor: Colors.white,
                         inactiveColor: Colors.grey,
                       ),
-                      Icon(Icons.volume_up, color: Colors.white),
                     ],
                   ),
                 ],
