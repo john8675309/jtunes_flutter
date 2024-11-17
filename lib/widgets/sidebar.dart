@@ -8,6 +8,7 @@ class Sidebar extends StatefulWidget {
     List<Map<String, dynamic>>? tracks,
     String? dbId,
     int? version,
+    String? deviceInfo,
   }) onItemSelected;
 
   const Sidebar({
@@ -25,6 +26,7 @@ class _SidebarState extends State<Sidebar> {
   List<Map<String, dynamic>>? _ipodTracks;
   String? _ipodDbId;
   int? _dbVersion;
+  String? _modelInfo;
 
   @override
   void initState() {
@@ -33,22 +35,58 @@ class _SidebarState extends State<Sidebar> {
   }
 
   Future<void> _checkForIpod() async {
-    _ipodDb = IpodDatabase();
-    bool connected = await _ipodDb!.open('/media/john/IPOD');
+    try {
+      _ipodDb = IpodDatabase();
+      bool connected = await _ipodDb!.open('/media/john/IPOD');
 
-    if (connected) {
-      final tracks = _ipodDb!.getTracks();
-      // Get database ID and version from your IpodDatabase class
-      final dbId = _ipodDb!.getDatabaseId(); // You'll need to add this method
-      final version =
-          _ipodDb!.getDatabaseVersion(); // You'll need to add this method
+      if (connected) {
+        List<Map<String, dynamic>>? tracks;
+        String? dbId;
+        int? version;
+        String? modelInfo;
 
-      setState(() {
-        _isIpodConnected = true;
-        _ipodTracks = tracks;
-        _ipodDbId = dbId;
-        _dbVersion = version;
-      });
+        try {
+          tracks = _ipodDb!.getTracks();
+          print('Got ${tracks?.length ?? 0} tracks');
+        } catch (e) {
+          print('Error getting tracks: $e');
+          tracks = [];
+        }
+
+        try {
+          dbId = _ipodDb!.getDatabaseId();
+          print('Got database ID: $dbId');
+        } catch (e) {
+          print('Error getting database ID: $e');
+        }
+
+        try {
+          version = _ipodDb!.getDatabaseVersion();
+          print('Got database version: $version');
+        } catch (e) {
+          print('Error getting database version: $e');
+        }
+
+        try {
+          modelInfo = _ipodDb!.getModelInfo();
+          print('Got model info: $modelInfo');
+        } catch (e) {
+          print('Error getting model info: $e');
+          modelInfo = 'Error getting device info';
+        }
+
+        setState(() {
+          _isIpodConnected = true;
+          _ipodTracks = tracks;
+          _ipodDbId = dbId;
+          _dbVersion = version;
+          _modelInfo = modelInfo;
+        });
+      } else {
+        print('Failed to connect to iPod');
+      }
+    } catch (e) {
+      print('Error in _checkForIpod: $e');
     }
   }
 
@@ -91,8 +129,8 @@ class _SidebarState extends State<Sidebar> {
           ),
           if (_isIpodConnected) ...[
             ListTile(
-              leading: Icon(Icons.devices, color: Colors.white),
-              title: Text(
+              leading: const Icon(Icons.devices, color: Colors.white),
+              title: const Text(
                 'iPod',
                 style: TextStyle(color: Colors.white),
               ),
@@ -102,11 +140,12 @@ class _SidebarState extends State<Sidebar> {
                   tracks: _ipodTracks,
                   dbId: _ipodDbId,
                   version: _dbVersion,
+                  deviceInfo: _modelInfo,
                 );
               },
             ),
             Padding(
-              padding: EdgeInsets.only(left: 16.0),
+              padding: const EdgeInsets.only(left: 16.0),
               child: Text(
                 '${_ipodTracks?.length ?? 0} songs',
                 style: TextStyle(color: Colors.grey[400], fontSize: 12),
@@ -138,23 +177,24 @@ class SidebarSection extends StatelessWidget {
     return ExpansionTile(
       title: Text(
         title,
-        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        style:
+            const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
       ),
       initiallyExpanded: initiallyExpanded,
+      iconColor: Colors.white,
+      collapsedIconColor: Colors.white,
       children: items
           .map((item) => ListTile(
                 leading: Icon(item.icon, color: Colors.white),
                 title: Text(
                   item.label,
-                  style: TextStyle(color: Colors.white),
+                  style: const TextStyle(color: Colors.white),
                 ),
                 onTap: () {
                   onItemSelected(item.label);
                 },
               ))
           .toList(),
-      iconColor: Colors.white,
-      collapsedIconColor: Colors.white,
     );
   }
 }

@@ -4,7 +4,7 @@ import 'package:ffi/ffi.dart';
 
 // Load the shared library
 final DynamicLibrary libgpod = Platform.isLinux
-    ? DynamicLibrary.open('/usr/lib/x86_64-linux-gnu/libgpod.so')
+    ? DynamicLibrary.open('/home/john/libgpod-0.8.3/src/.libs/libgpod.so')
     : throw UnsupportedError('This platform is not supported');
 
 // Helper function to safely convert native string to Dart string
@@ -16,6 +16,33 @@ String safeString(Pointer<Utf8> ptr) {
     print('Error converting string: $e');
     return '';
   }
+}
+
+final class Statvfs extends Struct {
+  @Uint64()
+  external int f_bsize; // File system block size
+  @Uint64()
+  external int f_frsize; // Fragment size
+  @Uint64()
+  external int f_blocks; // Size of fs in f_frsize units
+  @Uint64()
+  external int f_bfree; // Number of free blocks
+  @Uint64()
+  external int f_bavail; // Number of free blocks for unprivileged users
+  @Uint64()
+  external int f_files; // Number of inodes
+  @Uint64()
+  external int f_ffree; // Number of free inodes
+  @Uint64()
+  external int f_favail; // Number of free inodes for unprivileged users
+  @Uint64()
+  external int f_fsid; // File system ID
+  @Uint64()
+  external int f_flag; // Mount flags
+  @Uint64()
+  external int f_namemax; // Maximum filename length
+  @Array(6)
+  external Array<Uint64> f_spare; // Spare bytes
 }
 
 // GList structure from glib
@@ -128,6 +155,35 @@ final class ItdbITunesDB extends Struct {
   external Pointer<Void> reserved2;
 }
 
+final class ItdbIpodInfo extends Struct {
+  @Uint64() // Use 64-bit alignment
+  external int _padding1; // Add padding to match C struct alignment
+
+  external Pointer<Utf8> modelNumber;
+  external Pointer<Utf8> capacity;
+  external Pointer<Utf8> ipodModel;
+
+  @Int32()
+  external int generation;
+
+  @Int32()
+  external int _padding2; // Add 32-bit padding
+
+  external Pointer<Utf8> serialNumber;
+}
+
+final class ItdbDevice extends Struct {
+  external Pointer<Utf8> mountpoint;
+
+  @Int32()
+  external int byteOrder;
+
+  @Int32()
+  external int _padding; // Add padding for alignment
+
+  external Pointer<ItdbIpodInfo> info;
+}
+
 // Native function definitions
 typedef ItdbNewNative = Pointer<ItdbITunesDB> Function();
 typedef ItdbNew = Pointer<ItdbITunesDB> Function();
@@ -140,7 +196,30 @@ typedef ItdbParse = Pointer<ItdbITunesDB> Function(
 typedef ItdbFreeNative = Void Function(Pointer<ItdbITunesDB> db);
 typedef ItdbFree = void Function(Pointer<ItdbITunesDB> db);
 
-// Bind native functions
+typedef ItdbDeviceGetIpodInfoNative = Pointer<ItdbIpodInfo> Function(
+    Pointer<ItdbDevice> device);
+typedef ItdbDeviceGetIpodInfo = Pointer<ItdbIpodInfo> Function(
+    Pointer<ItdbDevice> device);
+
+typedef GTypeInitNative = Void Function();
+typedef GTypeInit = void Function();
+
+typedef ItdbInfoGetIpodInfoNative = Pointer<ItdbIpodInfo> Function(
+    Pointer<Utf8> mountpoint);
+typedef ItdbInfoGetIpodInfo = Pointer<ItdbIpodInfo> Function(
+    Pointer<Utf8> mountpoint);
+
+typedef ItdbDeviceGetSysInfoNative = Pointer<Utf8> Function(
+    Pointer<ItdbDevice> device, Pointer<Utf8> field);
+typedef ItdbDeviceGetSysInfo = Pointer<Utf8> Function(
+    Pointer<ItdbDevice> device, Pointer<Utf8> field);
+
+// Add this to the binding section
+final ItdbDeviceGetIpodInfo itdbDeviceGetIpodInfo = libgpod
+    .lookup<NativeFunction<ItdbDeviceGetIpodInfoNative>>(
+        'itdb_device_get_ipod_info')
+    .asFunction<ItdbDeviceGetIpodInfo>();
+
 final ItdbNew itdbNew = libgpod
     .lookup<NativeFunction<ItdbNewNative>>('itdb_new')
     .asFunction<ItdbNew>();
@@ -152,33 +231,334 @@ final ItdbParse itdbParse = libgpod
 final ItdbFree itdbFree = libgpod
     .lookup<NativeFunction<ItdbFreeNative>>('itdb_free')
     .asFunction<ItdbFree>();
+typedef StatvfsNative = Int32 Function(
+    Pointer<Utf8> path, Pointer<Statvfs> buf);
+typedef Statvfs_t = int Function(Pointer<Utf8> path, Pointer<Statvfs> buf);
 
 // High-level wrapper class
 class IpodDatabase {
   Pointer<ItdbITunesDB>? _db;
   bool _isOpen = false;
+  static bool _glibInitialized = false;
+  late final ItdbDeviceGetSysInfo getDeviceSysInfo;
 
   bool get isOpen => _isOpen;
 
+  static const Map<String, String> modelNumberToName = {
+    'xA101': 'iPod Classic 1st Generation',
+    'xA102': 'iPod Classic 2nd Generation',
+    'xA103': 'iPod Classic 3rd Generation',
+    'xA104': 'iPod Classic 4th Generation',
+    'xA105': 'iPod Classic 5th Generation',
+    'xB150': 'iPod Classic 6th Generation (160GB)',
+    'xB120': 'iPod Classic 6th Generation (120GB)',
+    'xB147': 'iPod Classic 7th Generation',
+    'xA130': 'iPod Mini 1st Generation',
+    'xA131': 'iPod Mini 2nd Generation',
+    'xA204': 'iPod Nano 1st Generation',
+    'xA205': 'iPod Nano 2nd Generation',
+    'xA206': 'iPod Nano 3rd Generation',
+    'xA211': 'iPod Nano 4th Generation',
+    'xA212': 'iPod Nano 5th Generation',
+    'xA213': 'iPod Nano 6th Generation',
+    'xA214': 'iPod Nano 7th Generation',
+  };
+
+  void _initGLib() {
+    if (!_glibInitialized) {
+      try {
+        final gTypeInit = libgpod
+            .lookup<NativeFunction<GTypeInitNative>>('g_type_init')
+            .asFunction<GTypeInit>();
+        gTypeInit();
+        _glibInitialized = true;
+        print('GLib initialized successfully');
+      } catch (e) {
+        print('Error initializing GLib: $e');
+      }
+    }
+  }
+
+  String _formatSize(double sizeInBytes) {
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    var size = sizeInBytes;
+    var unitIndex = 0;
+
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex++;
+    }
+
+    return '${size.toStringAsFixed(2)} ${units[unitIndex]}';
+  }
+
+  Map<String, String> getDiskInfo(String mountPoint) {
+    final path = mountPoint.toNativeUtf8();
+    final stat = calloc<Statvfs>();
+
+    try {
+      // Load libc
+      final libc = DynamicLibrary.open('libc.so.6');
+      final statvfs = libc
+          .lookup<NativeFunction<StatvfsNative>>('statvfs')
+          .asFunction<Statvfs_t>();
+
+      if (statvfs(path, stat) == 0) {
+        final blockSize = stat.ref.f_bsize;
+        final totalBlocks = stat.ref.f_blocks;
+        final freeBlocks = stat.ref.f_bfree;
+        final availableBlocks = stat.ref.f_bavail;
+
+        final totalSize = blockSize * totalBlocks;
+        final freeSize = blockSize * freeBlocks;
+        final usedSize = totalSize - freeSize;
+        final availableSize = blockSize * availableBlocks;
+
+        return {
+          'total': _formatSize(totalSize.toDouble()),
+          'used': _formatSize(usedSize.toDouble()),
+          'free': _formatSize(freeSize.toDouble()),
+          'available': _formatSize(availableSize.toDouble()),
+          'usage_percent': ((usedSize / totalSize) * 100).toStringAsFixed(1),
+        };
+      }
+    } catch (e) {
+      print('Error getting disk info: $e');
+    } finally {
+      calloc.free(path);
+      calloc.free(stat);
+    }
+
+    return {};
+  }
+
+  IpodDatabase() {
+    try {
+      getDeviceSysInfo = libgpod
+          .lookup<NativeFunction<ItdbDeviceGetSysInfoNative>>(
+              'itdb_device_get_sysinfo')
+          .asFunction<ItdbDeviceGetSysInfo>();
+    } catch (e) {
+      print('Error looking up sysinfo function: $e');
+    }
+  }
+  String? _getSysInfo(Pointer<ItdbDevice> device, String field) {
+    try {
+      final fieldPtr = field.toNativeUtf8();
+      try {
+        final resultPtr = getDeviceSysInfo(device, fieldPtr);
+        if (resultPtr != nullptr) {
+          return safeString(resultPtr);
+        }
+      } finally {
+        calloc.free(fieldPtr);
+      }
+    } catch (e) {
+      print('Error getting sysinfo for $field: $e');
+    }
+    return null;
+  }
+
+  int correctEndianness(int value, bool isBigEndian) {
+    if (!isBigEndian) return value;
+
+    // Swap bytes for 32-bit integer
+    return ((value & 0xFF) << 24) |
+        ((value & 0xFF00) << 8) |
+        ((value & 0xFF0000) >> 8) |
+        ((value & 0xFF000000) >> 24);
+  }
+
   String getDatabaseId() {
     if (_db == null) return '';
-    return _db!.ref.id.toString();
+    try {
+      return _db!.ref.id.toString();
+    } catch (e) {
+      print('Error getting database ID: $e');
+      return '';
+    }
+  }
+
+  String getModelInfo() {
+    print('Starting getModelInfo()...');
+    if (_db == null) {
+      print('Database is null');
+      return 'Database not initialized';
+    }
+
+    _initGLib();
+
+    String basicInfo;
+    try {
+      basicInfo = '''
+Database Version: ${_db!.ref.version}
+Database ID: ${_db!.ref.id}'''
+          .trim();
+      print('Got basic info: $basicInfo');
+    } catch (e) {
+      print('Error getting basic info: $e');
+      return 'Error getting basic database info';
+    }
+
+    try {
+      if (_db!.ref.device == nullptr) {
+        print('Device pointer is null');
+        return basicInfo;
+      }
+
+      final devicePtr = _db!.ref.device.cast<ItdbDevice>();
+      print('Device struct size: ${sizeOf<ItdbDevice>()}');
+
+      // Add mountpoint info
+      if (devicePtr.ref.mountpoint != nullptr) {
+        final mountpoint = safeString(devicePtr.ref.mountpoint);
+        basicInfo += '\nMount Point: $mountpoint';
+      }
+
+      // Try to get sysinfo fields
+      final fields = [
+        'ModelNumStr',
+        'ModelStr',
+        'GenerationStr',
+        'FirewireGuid',
+        'DeviceVersion',
+        'FamilyId',
+        'SerialNumber',
+        'ProductType',
+        'BoardHwRev',
+        'BoardRevision',
+        'HardwarePlatform',
+        'RegionInfo',
+        'PolicyFlags'
+      ];
+
+      print('Attempting to read device system info...');
+      String? modelNumber;
+
+      for (final field in fields) {
+        final value = _getSysInfo(devicePtr, field);
+        if (value != null && value.isNotEmpty) {
+          print('Got $field: $value');
+
+          // Store model number for later use
+          if (field == 'ModelNumStr') {
+            modelNumber = value;
+          }
+
+          basicInfo += '\n$field: $value';
+        }
+      }
+
+      // Add human-readable model name if available
+      if (modelNumber != null) {
+        final modelName = modelNumberToName[modelNumber];
+        if (modelName != null) {
+          basicInfo += '\nModel Name: $modelName';
+        }
+      }
+
+      try {
+        // Try to get byte order
+        final byteOrder = devicePtr.ref.byteOrder;
+        print('Byte order: $byteOrder');
+        basicInfo +=
+            '\nByte Order: ${byteOrder == 0 ? "Big Endian" : "Little Endian"}';
+      } catch (e) {
+        print('Error getting byte order: $e');
+      }
+
+      // Add disk space information
+      try {
+        final diskInfo = getDiskInfo('/media/john/IPOD');
+        if (diskInfo.isNotEmpty) {
+          basicInfo += '\n\nDisk Information:';
+          basicInfo += '\nTotal Size: ${diskInfo['total']}';
+          basicInfo +=
+              '\nUsed Space: ${diskInfo['used']} (${diskInfo['usage_percent']}%)';
+          basicInfo += '\nFree Space: ${diskInfo['free']}';
+          basicInfo += '\nAvailable Space: ${diskInfo['available']}';
+        }
+
+        // Add media statistics
+        final tracks = getTracks();
+        final totalMediaSize = tracks.fold<double>(
+            0, (sum, item) => sum + ((item['size'] ?? 0) / (1024 * 1024)));
+        final totalTracks = tracks.length;
+
+        basicInfo += '\n\nMedia Statistics:';
+        basicInfo += '\nTotal Tracks: $totalTracks';
+        basicInfo +=
+            '\nTotal Media Size: ${_formatSize(totalMediaSize * 1024 * 1024)}';
+
+        // Calculate average track size
+        if (totalTracks > 0) {
+          final averageTrackSize = totalMediaSize / totalTracks;
+          basicInfo +=
+              '\nAverage Track Size: ${_formatSize(averageTrackSize * 1024 * 1024)}';
+        }
+
+        // Add audio format statistics
+        final formatStats = <String, int>{};
+        int totalBitrate = 0;
+        int bitrateCount = 0;
+
+        for (final track in tracks) {
+          final String type = (track['type'] ?? '').toString();
+          formatStats[type] = (formatStats[type] ?? 0) + 1;
+
+          final int? bitrate = track['bitrate'] as int?;
+          if (bitrate != null && bitrate > 0) {
+            totalBitrate += bitrate;
+            bitrateCount++;
+          }
+        }
+
+        if (formatStats.isNotEmpty) {
+          basicInfo += '\n\nAudio Format Statistics:';
+          formatStats.forEach((format, count) {
+            final percentage = (count / totalTracks * 100).toStringAsFixed(1);
+            basicInfo += '\n$format: $count tracks ($percentage%)';
+          });
+        }
+
+        if (bitrateCount > 0) {
+          final averageBitrate = totalBitrate / bitrateCount;
+          basicInfo +=
+              '\nAverage Bitrate: ${averageBitrate.toStringAsFixed(0)} kbps';
+        }
+      } catch (e) {
+        print('Error calculating additional info: $e');
+      }
+
+      return basicInfo;
+    } catch (e) {
+      print('Error in getModelInfo: $e');
+      return basicInfo;
+    }
   }
 
   int getDatabaseVersion() {
     if (_db == null) return 0;
-    return _db!.ref.version;
+    try {
+      return _db!.ref.version;
+    } catch (e) {
+      print('Error getting database version: $e');
+      return 0;
+    }
   }
 
   Future<bool> open(String mountPoint) async {
     if (_isOpen) return true;
 
-    Pointer<Utf8>? mountPointPtr;
-    Pointer<Pointer<Void>>? error;
+    _initGLib();
+
+    late final Pointer<Utf8> mountPointPtr;
+    late final Pointer<Pointer<Void>> error;
 
     try {
       mountPointPtr = mountPoint.toNativeUtf8();
       error = calloc<Pointer<Void>>();
+      error.value = nullptr;
 
       _db = itdbParse(mountPointPtr, error);
 
@@ -187,8 +567,7 @@ class IpodDatabase {
         return false;
       }
 
-      // Verify the database structure
-      if (_db!.ref.tracks.address == 0) {
+      if (_db!.ref.tracks == nullptr || _db!.ref.tracks.address == 0) {
         print('No tracks list found in database');
         return false;
       }
@@ -199,8 +578,12 @@ class IpodDatabase {
       print('Error opening database: $e');
       return false;
     } finally {
-      //mountPointPtr?.free();
-      //error?.free();
+      try {
+        calloc.free(mountPointPtr);
+        calloc.free(error);
+      } catch (e) {
+        print('Error freeing memory: $e');
+      }
     }
   }
 
@@ -222,11 +605,12 @@ class IpodDatabase {
             final track = trackPtr.ref;
 
             // Debug print
+            /*
             print('Raw track data:');
             print('Title address: ${track.title.address}');
             print('Artist address: ${track.artist.address}');
             print('Album address: ${track.album.address}');
-
+            */
             tracks.add({
               'title': safeString(track.title),
               'artist': safeString(track.artist),

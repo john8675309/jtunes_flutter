@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'dart:io';
 import 'dart:async';
 import 'dart:isolate';
-import '../services/db_service.dart';
 import 'package:audioplayers/audioplayers.dart';
 
 class LoadingProgress {
@@ -19,8 +18,12 @@ class MediaList extends StatefulWidget {
   final List<Map<String, dynamic>>? tracks;
   final String? ipodDbId;
   final int? dbVersion;
+  final String? modelInfo;
   final AudioPlayer audioPlayer;
   final Function(String?, String?) onTrackChange;
+  final int? playingIndex; // Add these new properties
+  final bool isPlaying;
+  final Function(int?, bool) onPlayingStateChanged;
 
   const MediaList({
     super.key,
@@ -30,6 +33,10 @@ class MediaList extends StatefulWidget {
     this.dbVersion,
     required this.audioPlayer,
     required this.onTrackChange,
+    this.modelInfo,
+    this.playingIndex, // Add these new properties
+    this.isPlaying = false,
+    required this.onPlayingStateChanged,
   });
 
   @override
@@ -53,6 +60,9 @@ class _MediaListState extends State<MediaList> {
   void initState() {
     super.initState();
     print("Initializing MediaList...");
+    print(widget.modelInfo);
+    _playingIndex = widget.playingIndex;
+    _isPlaying = widget.isPlaying;
     _loadTracksInBackground();
   }
 
@@ -76,7 +86,7 @@ class _MediaListState extends State<MediaList> {
       });
       return;
     }
-    void _setupAudioPlayer() {
+    void setupAudioPlayer() {
       _audioPlayer.onPlayerStateChanged.listen((state) {
         setState(() {
           _isPlaying = state == PlayerState.playing;
@@ -95,7 +105,7 @@ class _MediaListState extends State<MediaList> {
       });
     }
 
-    Future<void> _stopPlayback() async {
+    Future<void> stopPlayback() async {
       await _audioPlayer.stop();
       setState(() {
         _playingIndex = null;
@@ -118,7 +128,7 @@ class _MediaListState extends State<MediaList> {
 
     receivePort.listen((message) {
       if (message is LoadingProgress) {
-        print("Progress: ${message.processedTracks}/${message.totalTracks}");
+        //print("Progress: ${message.processedTracks}/${message.totalTracks}");
         setState(() {
           _processedTracks = message.tracks;
           _isLoading = message.processedTracks < message.totalTracks;
@@ -178,10 +188,12 @@ class _MediaListState extends State<MediaList> {
   Future<void> playTrack(Map<String, dynamic> track, int index) async {
     try {
       if (_playingIndex == index && _isPlaying) {
-        await _audioPlayer.pause();
+        await widget.audioPlayer.pause();
+        widget.onPlayingStateChanged(index, false);
         return;
       } else if (_playingIndex == index && !_isPlaying) {
-        await _audioPlayer.resume();
+        await widget.audioPlayer.resume();
+        widget.onPlayingStateChanged(index, true);
         return;
       }
 
@@ -191,7 +203,7 @@ class _MediaListState extends State<MediaList> {
       if (path.isEmpty) return;
 
       final fullPath = path.replaceAll(':', '/');
-      final mountPoint = '/media/john/IPOD';
+      const mountPoint = '/media/john/IPOD';
       final filePath = '$mountPoint/$fullPath';
 
       if (!await File(filePath).exists()) {
@@ -200,7 +212,9 @@ class _MediaListState extends State<MediaList> {
       }
 
       final source = DeviceFileSource(filePath);
-      await _audioPlayer.play(source);
+      await widget.audioPlayer.play(source);
+      widget.onPlayingStateChanged(index, true);
+      widget.onTrackChange(track['title'], track['artist']);
       setState(() {
         _playingIndex = index;
         _isPlaying = true;
@@ -218,16 +232,16 @@ class _MediaListState extends State<MediaList> {
         title: Text(widget.selectedItem),
       ),
       body: _isLoading
-          ? Center(child: CircularProgressIndicator())
+          ? const Center(child: CircularProgressIndicator())
           : _processedTracks.isEmpty
-              ? Center(child: Text("No tracks available"))
+              ? const Center(child: Text("No tracks available"))
               : Column(
                   children: [
                     // Header Row
                     Container(
                       color: Colors.grey[850],
-                      padding: EdgeInsets.symmetric(vertical: 8.0),
-                      child: Row(
+                      padding: const EdgeInsets.symmetric(vertical: 8.0),
+                      child: const Row(
                         children: [
                           SizedBox(width: 50), // Play button space
                           Expanded(

@@ -1,21 +1,23 @@
 import 'package:flutter/material.dart';
 
 class NowPlayingBar extends StatelessWidget {
+  const NowPlayingBar({super.key});
+
   @override
   Widget build(BuildContext context) {
     return Container(
       height: 60.0,
       color: Colors.grey[900],
-      padding: EdgeInsets.symmetric(horizontal: 16.0),
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
       child: Row(
         children: [
-          Icon(Icons.music_note),
-          SizedBox(width: 16),
-          Text('Now Playing: Song Name'),
-          Spacer(),
-          IconButton(onPressed: () {}, icon: Icon(Icons.skip_previous)),
-          IconButton(onPressed: () {}, icon: Icon(Icons.play_arrow)),
-          IconButton(onPressed: () {}, icon: Icon(Icons.skip_next)),
+          const Icon(Icons.music_note),
+          const SizedBox(width: 16),
+          const Text('Now Playing: Song Name'),
+          const Spacer(),
+          IconButton(onPressed: () {}, icon: const Icon(Icons.skip_previous)),
+          IconButton(onPressed: () {}, icon: const Icon(Icons.play_arrow)),
+          IconButton(onPressed: () {}, icon: const Icon(Icons.skip_next)),
         ],
       ),
     );

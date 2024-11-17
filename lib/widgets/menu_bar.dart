@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 class CustomMenuBar extends StatelessWidget {
   final Function(String, String) onMenuSelected;
 
-  CustomMenuBar({required this.onMenuSelected});
+  const CustomMenuBar({super.key, required this.onMenuSelected});
 
   @override
   Widget build(BuildContext context) {
@@ -55,18 +55,18 @@ class CustomMenuBar extends StatelessWidget {
             ),
           )
           .toList(),
+      color: Colors.grey[800],
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16.0),
         child: Text(
           title,
-          style: TextStyle(
+          style: const TextStyle(
             color: Colors.white,
             fontWeight: FontWeight.bold,
             fontSize: 14.0,
           ),
         ),
-      ),
-      color: Colors.grey[800], // Background color for dropdown
+      ), // Background color for dropdown
     );
   }
 }

@@ -5,17 +5,19 @@ import 'libgpod_bridge.dart';
 
 void main() {
   // Initialize Flutter app
-  runApp(MyApp());
+  runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'iTunes Clone',
       theme: ThemeData.dark(),
-      home: HomeScreen(),
+      home: const HomeScreen(),
     );
   }
 }

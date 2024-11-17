@@ -14,6 +14,8 @@ class IpodService extends ChangeNotifier {
     try {
       _isConnected = await _database.open(mountPoint);
       if (_isConnected) {
+        print("**************************************");
+        print(_database.getModelInfo());
         _tracks = _database.getTracks();
         notifyListeners();
       }
