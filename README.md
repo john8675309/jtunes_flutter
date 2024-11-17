@@ -1,16 +1,10 @@
 # jtunes
 
-A new Flutter project.
+An iTunes Clone, with a focus on the iPod Classic
 
 ## Getting Started
 
-This project is a starting point for a Flutter application.
+Right now it's heavily Linux focused as it uses libgpod and libc for some os specific functions (Disk Space). There is just some things Flutter won't do on the Desktop (like volume controls). Still a work in Progress.
 
-A few resources to get you started if this is your first Flutter project:
+![Screenshot of the app](https://github.com/john8675309/jtunes_flutter/blob/main/ScreenShot.png?raw=true)
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
