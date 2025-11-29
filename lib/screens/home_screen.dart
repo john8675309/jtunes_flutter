@@ -14,20 +14,24 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final AudioPlayer audioPlayer = AudioPlayer();
+  final GlobalKey<MediaListState> _mediaListKey = GlobalKey<MediaListState>();
   String selectedItem = 'Recently Added';
-  List<Map<String, dynamic>>? ipodTracks;
+  List<Map<String, dynamic>>? currentTracks; // Renamed from ipodTracks to be more generic
   String? ipodDbId;
   int? dbVersion;
   String? currentSong;
   String? modelInfo;
   String? currentArtist;
+  String? currentTrackPath; // Add this field
   bool isIpodSelected = false;
   int? _playingIndex;
   bool _isPlaying = false;
-  void updateCurrentTrack(String? song, String? artist) {
+
+  void updateCurrentTrack(String? song, String? artist, String? path) {
     setState(() {
       currentSong = song;
       currentArtist = artist;
+      currentTrackPath = path;
     });
   }
 
@@ -38,9 +42,21 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  void _handlePlayPause() {
+    _mediaListKey.currentState?.togglePlayPause();
+  }
+
+  void _handleNext() {
+    _mediaListKey.currentState?.playNext();
+  }
+
+  void _handlePrevious() {
+    _mediaListKey.currentState?.playPrevious();
+  }
+
   int getTotalTime() {
-    if (isIpodSelected && ipodTracks != null) {
-      return ipodTracks!.fold<int>(0, (sum, item) {
+    if (currentTracks != null) {
+      return currentTracks!.fold<int>(0, (sum, item) {
         // Ensure we're returning an integer
         final duration = item['duration'] as int? ?? 0;
         return sum + (duration ~/ 1000); // Use integer division
@@ -50,8 +66,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   double getTotalSize() {
-    if (isIpodSelected && ipodTracks != null) {
-      return ipodTracks!.fold<double>(
+    if (currentTracks != null) {
+      return currentTracks!.fold<double>(
           0, (sum, item) => sum + ((item['size'] ?? 0) / (1024 * 1024)));
     }
     return 0.0;
@@ -78,8 +94,8 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       selectedItem = item;
       isIpodSelected = item == 'iPod';
+      currentTracks = tracks; // Always update tracks
       if (isIpodSelected) {
-        ipodTracks = tracks;
         ipodDbId = dbId;
         dbVersion = version;
         modelInfo = deviceInfo;
@@ -97,7 +113,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     int totalTime = getTotalTime();
     double totalSize = getTotalSize();
-    final trackCount = isIpodSelected ? (ipodTracks?.length ?? 0) : 0;
+    final trackCount = currentTracks?.length ?? 0;
 
     return Scaffold(
       body: Column(
@@ -106,67 +122,63 @@ class _HomeScreenState extends State<HomeScreen> {
             audioPlayer: audioPlayer,
             currentSong: currentSong,
             currentArtist: currentArtist,
+            currentTrackPath: currentTrackPath,
+            isPlaying: _isPlaying,
+            onPlayPause: _handlePlayPause,
+            onNext: _handleNext,
+            onPrevious: _handlePrevious,
           ),
           Expanded(
             child: Row(
               children: [
                 Sidebar(onItemSelected: updateSelectedItem),
                 Expanded(
-                  child: selectedItem == 'iPod'
-                      ? IpodInfo(
-                          tracks: ipodTracks,
-                          ipodDbId: ipodDbId,
-                          dbVersion: dbVersion,
-                          modelInfo: modelInfo,
-                          audioPlayer: audioPlayer,
-                          onTrackChange: updateCurrentTrack,
-                        )
-                      : Column(
+                  child: Column(
+                    children: [
+                      Expanded(
+                        child: Padding(
+                          padding: EdgeInsets.zero,
+                          child: MediaList(
+                            key: _mediaListKey,
+                            selectedItem: selectedItem,
+                            tracks: currentTracks, // Pass currentTracks
+                            ipodDbId: isIpodSelected ? ipodDbId : null,
+                            dbVersion: isIpodSelected ? dbVersion : null,
+                            modelInfo: isIpodSelected ? modelInfo : null,
+                            audioPlayer: audioPlayer,
+                            onTrackChange: updateCurrentTrack,
+                            playingIndex: _playingIndex,
+                            isPlaying: _isPlaying,
+                            onPlayingStateChanged: updatePlayingState,
+                          ),
+                        ),
+                      ),
+                      Container(
+                        height: 50.0,
+                        color: Colors.grey[850],
+                        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Expanded(
-                              child: Padding(
-                                padding: EdgeInsets.zero,
-                                child: MediaList(
-                                  selectedItem: selectedItem,
-                                  tracks: isIpodSelected ? ipodTracks : null,
-                                  ipodDbId: isIpodSelected ? ipodDbId : null,
-                                  dbVersion: isIpodSelected ? dbVersion : null,
-                                  modelInfo: isIpodSelected ? modelInfo : null,
-                                  audioPlayer: audioPlayer,
-                                  onTrackChange: updateCurrentTrack,
-                                  playingIndex: _playingIndex,
-                                  isPlaying: _isPlaying,
-                                  onPlayingStateChanged: updatePlayingState,
-                                ),
-                              ),
+                            Text(
+                              '$trackCount items',
+                              style: const TextStyle(color: Colors.white),
                             ),
-                            Container(
-                              height: 50.0,
-                              color: Colors.grey[850],
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 16.0),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text(
-                                    '$trackCount items',
-                                    style: const TextStyle(color: Colors.white),
-                                  ),
-                                  const SizedBox(width: 16.0),
-                                  Text(
-                                    'Total Time: ${formatTime(totalTime)}',
-                                    style: const TextStyle(color: Colors.white),
-                                  ),
-                                  const SizedBox(width: 16.0),
-                                  Text(
-                                    'Total Size: ${totalSize.toStringAsFixed(2)} MB',
-                                    style: const TextStyle(color: Colors.white),
-                                  ),
-                                ],
-                              ),
+                            const SizedBox(width: 16.0),
+                            Text(
+                              'Total Time: ${formatTime(totalTime)}',
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                            const SizedBox(width: 16.0),
+                            Text(
+                              'Total Size: ${totalSize.toStringAsFixed(2)} MB',
+                              style: const TextStyle(color: Colors.white),
                             ),
                           ],
                         ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),

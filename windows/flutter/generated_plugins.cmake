@@ -4,6 +4,7 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   audioplayers_windows
+  audiotags
   sqlite3_flutter_libs
 )
 

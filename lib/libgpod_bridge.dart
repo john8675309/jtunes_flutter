@@ -4,7 +4,7 @@ import 'package:ffi/ffi.dart';
 
 // Load the shared library
 final DynamicLibrary libgpod = Platform.isLinux
-    ? DynamicLibrary.open('/home/john/libgpod-0.8.3/src/.libs/libgpod.so')
+    ? DynamicLibrary.open('/home/john/Downloads/libgpod-dev/libgpod-0.8.3/src/.libs/libgpod.so')
     : throw UnsupportedError('This platform is not supported');
 
 // Helper function to safely convert native string to Dart string
@@ -214,11 +214,58 @@ typedef ItdbDeviceGetSysInfoNative = Pointer<Utf8> Function(
 typedef ItdbDeviceGetSysInfo = Pointer<Utf8> Function(
     Pointer<ItdbDevice> device, Pointer<Utf8> field);
 
-// Add this to the binding section
-final ItdbDeviceGetIpodInfo itdbDeviceGetIpodInfo = libgpod
-    .lookup<NativeFunction<ItdbDeviceGetIpodInfoNative>>(
-        'itdb_device_get_ipod_info')
-    .asFunction<ItdbDeviceGetIpodInfo>();
+// ... existing typedefs ...
+
+typedef ItdbTrackNewNative = Pointer<ItdbTrack> Function();
+typedef ItdbTrackNew = Pointer<ItdbTrack> Function();
+
+typedef ItdbTrackAddNative = Void Function(
+    Pointer<ItdbITunesDB> itdb, Pointer<ItdbTrack> track, Int32 pos);
+typedef ItdbTrackAdd = void Function(
+    Pointer<ItdbITunesDB> itdb, Pointer<ItdbTrack> track, int pos);
+
+typedef ItdbWriteNative = Int32 Function(
+    Pointer<ItdbITunesDB> itdb, Pointer<Pointer<Void>> error);
+typedef ItdbWrite = int Function(
+    Pointer<ItdbITunesDB> itdb, Pointer<Pointer<Void>> error);
+
+typedef ItdbCpTrackToIpodNative = Int32 Function(
+    Pointer<ItdbTrack> track, Pointer<Utf8> filename, Pointer<Pointer<Void>> error);
+typedef ItdbCpTrackToIpod = int Function(
+    Pointer<ItdbTrack> track, Pointer<Utf8> filename, Pointer<Pointer<Void>> error);
+
+// ... bindings ...
+
+final ItdbTrackNew itdbTrackNew = libgpod
+    .lookup<NativeFunction<ItdbTrackNewNative>>('itdb_track_new')
+    .asFunction<ItdbTrackNew>();
+
+final ItdbTrackAdd itdbTrackAdd = libgpod
+    .lookup<NativeFunction<ItdbTrackAddNative>>('itdb_track_add')
+    .asFunction<ItdbTrackAdd>();
+
+final ItdbWrite itdbWrite = libgpod
+    .lookup<NativeFunction<ItdbWriteNative>>('itdb_write')
+    .asFunction<ItdbWrite>();
+
+final ItdbCpTrackToIpod itdbCpTrackToIpod = libgpod
+    .lookup<NativeFunction<ItdbCpTrackToIpodNative>>('itdb_cp_track_to_ipod')
+    .asFunction<ItdbCpTrackToIpod>();
+
+// ... bindings ...
+
+typedef GStrDupNative = Pointer<Utf8> Function(Pointer<Utf8> str);
+typedef GStrDup = Pointer<Utf8> Function(Pointer<Utf8> str);
+
+final GStrDup gStrDup = libgpod
+    .lookup<NativeFunction<GStrDupNative>>('g_strdup')
+    .asFunction<GStrDup>();
+
+// ... IpodDatabase class ...
+
+
+
+
 
 final ItdbNew itdbNew = libgpod
     .lookup<NativeFunction<ItdbNewNative>>('itdb_new')
@@ -469,7 +516,7 @@ Database ID: ${_db!.ref.id}'''
 
       // Add disk space information
       try {
-        final diskInfo = getDiskInfo('/media/john/IPOD');
+        final diskInfo = getDiskInfo('/media/john/iPod');
         if (diskInfo.isNotEmpty) {
           basicInfo += '\n\nDisk Information:';
           basicInfo += '\nTotal Size: ${diskInfo['total']}';
@@ -627,6 +674,9 @@ Database ID: ${_db!.ref.id}'''
               'play_count': track.playcount,
               'compilation': track.compilation,
               'type': '${track.type1},${track.type2}',
+              'podcast_url': safeString(track.podcasturl),
+              'tv_show': safeString(track.tvshow),
+              'file_type': safeString(track.filetype),
             });
           }
 
@@ -647,6 +697,117 @@ Database ID: ${_db!.ref.id}'''
     }
 
     return tracks;
+  }
+
+  Future<bool> addTrack(Map<String, dynamic> trackData) async {
+    if (!_isOpen || _db == null) return false;
+
+    Pointer<Utf8>? filenamePtr;
+    Pointer<Pointer<Void>>? error;
+
+    try {
+      final trackPtr = itdbTrackNew();
+      final track = trackPtr.ref;
+
+      // Add to database first to set track->itdb
+      // -1 adds to the end of the master playlist (and main library)
+      itdbTrackAdd(_db!, trackPtr, -1);
+
+      // Copy file to iPod
+      final path = trackData['path'] as String;
+      filenamePtr = path.toNativeUtf8();
+      error = calloc<Pointer<Void>>();
+      error.value = nullptr;
+
+      final success = itdbCpTrackToIpod(trackPtr, filenamePtr, error);
+      if (success != 1) {
+        print('Error copying track to iPod');
+        // If copy fails, we should probably remove the track?
+        // But for now let's just return false.
+        return false;
+      }
+
+      // Helper to set string fields using g_strdup
+      void setField(String? value, void Function(Pointer<Utf8>) setter) {
+        if (value != null) {
+          final tempPtr = value.toNativeUtf8();
+          final dupPtr = gStrDup(tempPtr);
+          setter(dupPtr);
+          calloc.free(tempPtr);
+        }
+      }
+
+      // Set metadata
+      // We have to manually set the pointer fields on the struct
+      // Since we can't pass a setter for a field, we do it directly
+      
+      if (trackData['title'] != null) {
+        final tempPtr = (trackData['title'] as String).toNativeUtf8();
+        track.title = gStrDup(tempPtr);
+        calloc.free(tempPtr);
+      }
+      
+      if (trackData['artist'] != null) {
+        final tempPtr = (trackData['artist'] as String).toNativeUtf8();
+        track.artist = gStrDup(tempPtr);
+        calloc.free(tempPtr);
+      }
+
+      if (trackData['album'] != null) {
+        final tempPtr = (trackData['album'] as String).toNativeUtf8();
+        track.album = gStrDup(tempPtr);
+        calloc.free(tempPtr);
+      }
+      
+      if (trackData['genre'] != null) {
+        final tempPtr = (trackData['genre'] as String).toNativeUtf8();
+        track.genre = gStrDup(tempPtr);
+        calloc.free(tempPtr);
+      }
+      
+      if (trackData['file_type'] != null) {
+        final tempPtr = (trackData['file_type'] as String).toNativeUtf8();
+        track.filetype = gStrDup(tempPtr);
+        calloc.free(tempPtr);
+      }
+
+      // Set numeric fields
+      track.tracklen = trackData['duration'] ?? 0;
+      track.size = trackData['size'] ?? 0;
+      track.track_nr = trackData['track_number'] ?? 0;
+      track.year = trackData['year'] ?? 0;
+      track.time_added = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      track.time_modified = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      
+      return true;
+    } catch (e) {
+      print('Error adding track: $e');
+      return false;
+    } finally {
+      if (filenamePtr != null) calloc.free(filenamePtr);
+      if (error != null) calloc.free(error);
+    }
+  }
+
+  Future<bool> save() async {
+    if (!_isOpen || _db == null) return false;
+    
+    final error = calloc<Pointer<Void>>();
+    error.value = nullptr;
+    
+    try {
+      final success = itdbWrite(_db!, error);
+      if (success != 1) {
+        print('Error saving database');
+        return false;
+      }
+      return true;
+    } catch (e) {
+      print('Error saving database: $e');
+      return false;
+    } finally {
+      calloc.free(error);
+    }
   }
 
   void close() {

@@ -8,7 +8,7 @@ class IpodInfo extends StatefulWidget {
   final int? dbVersion;
   final String? modelInfo;
   final AudioPlayer audioPlayer;
-  final Function(String?, String?) onTrackChange;
+  final Function(String?, String?, String?) onTrackChange;
 
   const IpodInfo({
     super.key,
